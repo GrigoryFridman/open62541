@@ -6,6 +6,7 @@
 # Custom XML      #
 ###################
 
+
 set(FILE_CSV_DIRPREFIX ${PROJECT_SOURCE_DIR}/nodeset)
 set(FILE_BSD_DIRPREFIX ${PROJECT_SOURCE_DIR}/nodeset)
 set(FILE_NS_DIRPREFIX ${PROJECT_SOURCE_DIR}/nodeset)
@@ -15,6 +16,7 @@ if(NOT CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
     set(PROJECT_BINARY_DIR ${CMAKE_BINARY_DIR})
 endif()
 
+#[[
 # generate namespace from XML file
 if(NOT CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
     ua_generate_nodeset_and_datatypes(
@@ -153,5 +155,49 @@ if(UA_NAMESPACE_ZERO STREQUAL "FULL")
 
     add_example(optStructs_test optStructs_test.c
             ${CMAKE_SOURCE_DIR}/src_generated/open62541/optstructs_generated.c)
+
+endif()
+
+]]
+
+####################
+#  AutoID Nodeset  #
+####################
+
+# AutoID requires the full ns0 as basis
+if(UA_NAMESPACE_ZERO STREQUAL "FULL")
+
+    ua_generate_nodeset_and_datatypes(
+            NAME "di"
+            FILE_CSV "${CMAKE_SOURCE_DIR}/deps/ua-nodeset/DI/OpcUaDiModel.csv"
+            FILE_BSD "${CMAKE_SOURCE_DIR}/deps/ua-nodeset/DI/Opc.Ua.Di.Types.bsd"
+            NAMESPACE_IDX 2
+            FILE_NS "${CMAKE_SOURCE_DIR}/deps/ua-nodeset/DI/Opc.Ua.Di.NodeSet2.xml"
+            INTERNAL
+    )
+
+    # generate AutoIDopen namespace which is using DI
+    ua_generate_nodeset_and_datatypes(
+            NAME "autoid"
+            FILE_CSV "${CMAKE_SOURCE_DIR}/Opc.Ua.AutoID.NodeIds.csv"
+            FILE_BSD "${CMAKE_SOURCE_DIR}/Opc.Ua.AutoID.Types.bsd"
+            NAMESPACE_IDX 3
+            FILE_NS "${CMAKE_SOURCE_DIR}/Opc.Ua.AutoID.NodeSet2.xml"
+            # AutoID depends on the di nodeset, which must be generated before
+            DEPENDS "di"
+            INTERNAL
+    )
+
+
+    add_example(server_nodeset_autoid server_nodeset_autoid.c
+            ${UA_NODESET_DI_SOURCES}
+            ${UA_TYPES_DI_SOURCES}
+            ${UA_NODESET_AUTOID_SOURCES}
+            ${UA_TYPES_AUTOID_SOURCES}
+            ${CMAKE_SOURCE_DIR}/examples/nodeset/json/cJSON.c
+            #${CMAKE_SOURCE_DIR}/examples/nodeset/paho.mqtt.c/MQTTClient.c
+            )
+
+    add_dependencies(server_nodeset_autoid open62541-generator-ns-autoid)
 
 endif()

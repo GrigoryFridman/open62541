@@ -1058,7 +1058,7 @@ const UA_copySignature copyJumpTable[UA_DATATYPEKINDS] = {
     (UA_copySignature)copyNotImplemented, /* Decimal */
     (UA_copySignature)copy4Byte, /* Enumeration */
     (UA_copySignature)copyStructure,
-    (UA_copySignature)copyNotImplemented, /* Structure with Optional Fields */
+    (UA_copySignature)copyStructure, /* Structure with Optional Fields */
     (UA_copySignature)copyNotImplemented, /* Union */
     (UA_copySignature)copyNotImplemented /* BitfieldCluster*/
 };
