@@ -261,11 +261,12 @@ scanPozyxTag(UA_Server *server,
     UA_RtlsLocationResult res;
     UA_RtlsLocationResult_init(&res);
 
-    res.hasLocation = true;
+    res.hasLocation = false;
     res.codeType = UA_STRING("RAW:BYTES");
     res.scanData.switchField = 1;
     res.scanData.byteString = UA_BYTESTRING("AD-CD-03-04");
     res.timestamp = UA_DateTime_now();
+    res.location.switchField = 2;
     res.location.local.x = 1.0;
     res.location.local.y = 2.0;
     res.location.local.z = 4.0;
@@ -278,11 +279,38 @@ scanPozyxTag(UA_Server *server,
     res.receiveTime = UA_DateTime_now();
 
 
+    printf("%zu\n", sizeof(UA_RtlsLocationResult));
     UA_ByteString *buf = UA_ByteString_new();
     size_t msgSize = UA_RtlsLocationResult_calcSizeBinary(&res);
+    printf("%zu\n", msgSize);
     UA_ByteString_allocBuffer(buf, msgSize);
+    memset(buf->data, 0, msgSize);
+    UA_Byte *bufPos = buf->data;
     const UA_Byte *bufEnd = &buf->data[buf->length];
-    UA_RtlsLocationResult_encodeBinary(&res, &buf->data, bufEnd);
+    UA_RtlsLocationResult_encodeBinary(&res, &bufPos, bufEnd);
+
+    for(size_t i=0; i<buf->length; i++){
+        printf("%02X", buf->data[i]);
+    }
+    printf("\n");
+
+    UA_RtlsLocationResult *resD = UA_RtlsLocationResult_new();
+    size_t offset = 0;
+    UA_RtlsLocationResult_decodeBinary(buf, &offset, resD);
+
+    printf("hasLocation: %d\n", resD->hasLocation);
+    printf("codeType: %s\n", resD->codeType.data);
+    printf("sd switchField: %d\n", resD->scanData.switchField);
+    printf("sd byteString: %s\n", resD->scanData.byteString.data);
+    printf("timestamp: %ld\n", resD->timestamp);
+    printf("location switchField: %d\n", resD->location.switchField);
+    printf("location local x: %f\n", resD->location.local.x);
+    printf("location local y: %f\n", resD->location.local.y);
+    printf("location local z: %f\n", resD->location.local.z);
+    printf("speed: %f\n", resD->speed);
+    printf("heading: %f\n", resD->heading);
+    printf("rotation pitch: %f\n", resD->rotation.pitch);
+    printf("receivetime: %ld\n", resD->receiveTime);
 
 
     printf("%zu\n", buf->length);
