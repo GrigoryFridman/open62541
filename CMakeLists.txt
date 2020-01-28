@@ -454,14 +454,14 @@ if(NOT UA_COMPILE_AS_CXX AND (CMAKE_COMPILER_IS_GNUCC OR "x${CMAKE_C_COMPILER_ID
     check_add_cc_flag("-Wall")      # Warnings
     check_add_cc_flag("-Wextra")    # More warnings
     check_add_cc_flag("-Wpedantic") # Standard compliance
-    check_add_cc_flag("-Werror")    # All warnings are errors
+    #check_add_cc_flag("-Werror")    # All warnings are errors
 
     check_add_cc_flag("-Wno-static-in-inline") # Clang doesn't like the use of static inline methods inside static inline methods
     check_add_cc_flag("-Wno-overlength-strings") # May happen in the nodeset compiler when complex values are directly encoded
     check_add_cc_flag("-Wno-unused-parameter") # some methods may require unused arguments to cast to a method pointer
 
     # Use a strict subset of the C and C++ languages
-    check_add_cc_flag("-Wc++-compat")
+    #check_add_cc_flag("-Wc++-compat")
 
     # Check that format strings (printf/scanf) are sane
     check_add_cc_flag("-Wformat")

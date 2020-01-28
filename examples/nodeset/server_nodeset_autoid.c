@@ -15,7 +15,9 @@
 #include "open62541/types_autoid_generated_encoding_binary.h"
 #include "open62541/types_autoid_generated_handling.h"
 
-#include "paho.mqtt.c/MQTTClient.h"
+
+#include "mqtt-c/include/mqtt.h"
+#include "mqtt-c/include/posix_sockets.h"
 
 #include "json/cJSON.h"
 
@@ -24,19 +26,24 @@
 #include <open62541/types.h>
 
 #define ADDRESS     "localhost"
+#define PORT        "1883"
 #define CLIENTID    "ExampleClientSub"
 #define TOPIC       "tags"
 #define PAYLOAD     "Hello World!"
 #define QOS         1
 #define TIMEOUT     10000L
 
-/*
+
 static int pozyx_mqtt_config(void);
-void conn_lost(void *context, char *cause);
+void publish_callback(void** unused, struct mqtt_response_publish *published);
+void* client_refresher(void* client);
+/*void conn_lost(void *context, char *cause);
 int msg_arrvd(void *context, char *topicname, int topicLen, MQTTClient_message *message);
 void delivered(void *context, MQTTClient_deliveryToken dt);
 
 volatile MQTTClient_deliveryToken deliveredtoken;*/
+
+
 UA_UInt16 autoidNamespace;
 
 
@@ -182,6 +189,7 @@ static void addPozyxTag(UA_Server *server, char *name, UA_String tagId){
     UA_Server_writeValue(server, currentChild, val);
 
 }
+
 static UA_StatusCode getSupportedLocationTypes(UA_Server *server,
                                                const UA_NodeId *sessionId, void *sessionHandle,
                                                const UA_NodeId *methodId, void *methodContext,
@@ -328,7 +336,7 @@ scanPozyxTag(UA_Server *server,
 
     UA_AutoIdOperationStatusEnumeration st;
     UA_AutoIdOperationStatusEnumeration_init(&st);
-    st = UA_AUTOIDOPERATIONSTATUSENUMERATION_READ_ERROR;
+    st = UA_AUTOIDOPERATIONSTATUSENUMERATION_SUCCESS;
 
     UA_Variant_setScalar(output, e, &UA_TYPES[UA_TYPES_EXTENSIONOBJECT]);
     //UA_Variant_setArrayCopy(output, (UA_Variant*)e, 1, &UA_TYPES_AUTOID[UA_TYPES_AUTOID_RTLSLOCATIONRESULT]);
@@ -377,6 +385,68 @@ int pozyx_mqtt_config(void){
     return rc;
 }*/
 
+int pozyx_mqtt_config(void){
+    int sockfd = open_nb_socket(ADDRESS, PORT);
+
+    if(sockfd == -1){
+        UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND, "Failed to open socket for MQTT connection");
+        return -1;
+    }
+
+    // setup a client
+    struct mqtt_client client;
+    uint8_t sendbuf[2048]; // sendbuf should be large enough to hold multiple whole mqtt messages
+    uint8_t recvbuf[4096]; // recvbuf should be large enough any whole mqtt message expected to be received
+    printf("%s\n", mqtt_error_str(mqtt_init(&client, sockfd, sendbuf, sizeof(sendbuf), recvbuf, sizeof(recvbuf), publish_callback)));
+    // Create an anonymous session
+    const char* client_id = NULL;
+    // Ensure we have a clean session
+    uint8_t connect_flags = MQTT_CONNECT_CLEAN_SESSION;
+    // Send connection request to the broker.
+    printf("%s\n", mqtt_error_str(mqtt_connect(&client, client_id, NULL, NULL, 0, NULL, NULL, connect_flags, 400)));
+
+    // check that we don't have any errors
+    if (client.error != MQTT_OK) {
+        UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND, "Failed to create MQTT client: %s", mqtt_error_str(client.error));
+        return -1;
+    }
+
+
+    // start a thread to refresh the client (handle egress and ingree client traffic)
+    pthread_t client_daemon;
+    if(pthread_create(&client_daemon, NULL, client_refresher, &client)) {
+        UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND, "Failed to to start MQTT client daemon");
+        return -1;
+    }
+
+    // subscribe
+    mqtt_subscribe(&client, TOPIC, 0);
+    return 0;
+}
+
+void publish_callback(void** unused, struct mqtt_response_publish *published)
+{
+    // note that published->topic_name is NOT null-terminated (here we'll change it to a c-string)
+    char* topic_name = (char*) malloc((size_t) published->topic_name_size + 1);
+    memcpy(topic_name, published->topic_name, published->topic_name_size);
+    topic_name[published->topic_name_size] = '\0';
+
+    cJSON *json = cJSON_Parse((const char*) published->application_message);
+    printf("%s\n", cJSON_Print(json));
+
+    free(topic_name);
+}
+
+void* client_refresher(void* client)
+{
+    while(1)
+    {
+        mqtt_sync((struct mqtt_client*) client);
+        usleep(100000U);
+    }
+    return NULL;
+}
+
 UA_Boolean serverRunning = true;
 
 static void stopHandler(int sign) {
@@ -415,7 +485,7 @@ int main(int argc, char** argv) {
     addPozyxTag(server, "Pozyx Tag 0x6a28", UA_STRING("0x6a28"));
     addPozyxTag(server, "Pozyx Tag 0x6a57", UA_STRING("0x6a57"));
 
-    //pozyx_mqtt_config();
+    pozyx_mqtt_config();
 
     UA_Server_setMethodNode_callback(server, UA_NODEID_NUMERIC(autoidNamespace, 7055), scanPozyxTag);
     UA_Server_setMethodNode_callback(server, UA_NODEID_NUMERIC(autoidNamespace, 7058), getSupportedLocationTypes);

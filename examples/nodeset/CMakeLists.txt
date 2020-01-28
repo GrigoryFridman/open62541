@@ -188,6 +188,11 @@ if(UA_NAMESPACE_ZERO STREQUAL "FULL")
             INTERNAL
     )
 
+    file(GLOB PAHO_MQTT_SOURCES
+            "paho.mqtt.c/*.c")
+
+    file(GLOB MQTT_C_SOURCES
+            "mqtt-c/src/*.c")
 
     add_example(server_nodeset_autoid server_nodeset_autoid.c
             ${UA_NODESET_DI_SOURCES}
@@ -195,8 +200,10 @@ if(UA_NAMESPACE_ZERO STREQUAL "FULL")
             ${UA_NODESET_AUTOID_SOURCES}
             ${UA_TYPES_AUTOID_SOURCES}
             ${CMAKE_SOURCE_DIR}/examples/nodeset/json/cJSON.c
-            #${CMAKE_SOURCE_DIR}/examples/nodeset/paho.mqtt.c/MQTTClient.c
+            #${PAHO_MQTT_SOURCES}
+            ${MQTT_C_SOURCES}
             )
+
 
     add_dependencies(server_nodeset_autoid open62541-generator-ns-autoid)
 
