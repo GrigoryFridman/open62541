@@ -15,6 +15,7 @@
 #include "open62541/types_autoid_generated_encoding_binary.h"
 #include "open62541/types_autoid_generated_handling.h"
 
+#include "server_nodeset_autoid.h"
 
 #include "mqtt-c/include/mqtt.h"
 #include "mqtt-c/include/posix_sockets.h"
@@ -37,15 +38,18 @@
 static int pozyx_mqtt_config(void);
 void publish_callback(void** unused, struct mqtt_response_publish *published);
 void* client_refresher(void* client);
-/*void conn_lost(void *context, char *cause);
-int msg_arrvd(void *context, char *topicname, int topicLen, MQTTClient_message *message);
-void delivered(void *context, MQTTClient_deliveryToken dt);
 
-volatile MQTTClient_deliveryToken deliveredtoken;*/
+void updateTagsArray(const char* json);
 
+UA_UInt16 getTagArrayIndex(UA_Int32 tagId);
+
+UA_Boolean tagInArray(UA_Int32 tagId);
+
+static size_t getNumberAliveTags();
+
+UA_UInt16 tagsPointer = 0;
 
 UA_UInt16 autoidNamespace;
-
 
 
 static UA_NodeId findSingleChildNode(UA_Server *server, UA_QualifiedName targetName, UA_NodeId referenceTypeId, UA_NodeId startingNode){
@@ -77,22 +81,23 @@ static UA_NodeId findSingleChildNode(UA_Server *server, UA_QualifiedName targetN
 }
 
 
-static void addPozyxTag(UA_Server *server, char *name, UA_String tagId){
+static void addPozyx(UA_Server *server){
     UA_NodeId pozyxTagNodeId;
     UA_ObjectAttributes object_attr = UA_ObjectAttributes_default;
 
-    object_attr.displayName = UA_LOCALIZEDTEXT("en-US", name);
+    object_attr.displayName = UA_LOCALIZEDTEXT("en-US", "Pozyx system");
 
     UA_Server_addObjectNode(server, UA_NODEID_NULL,
                             UA_NODEID_NUMERIC(2, 5001),
                             UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
-                            UA_QUALIFIEDNAME(1, name),
+                            UA_QUALIFIEDNAME(1, "Pozyx system"),
                             UA_NODEID_NUMERIC((autoidNamespace = UA_Server_addNamespace(server, "http://opcfoundation.org/UA/AutoID/")), 1012),
                             object_attr, NULL, &pozyxTagNodeId);
 
     UA_NodeId currentChild;
     UA_Variant val;
 
+    /*
     currentChild = findSingleChildNode(server, UA_QUALIFIEDNAME(2, "SoftwareRevision"), UA_NODEID_NUMERIC(0, UA_NS0ID_HASPROPERTY), pozyxTagNodeId);
     UA_String softwareRevision = UA_STRING("v2.0");
     UA_Variant_setScalar(&val, &softwareRevision, &UA_TYPES[UA_TYPES_STRING]);
@@ -107,9 +112,10 @@ static void addPozyxTag(UA_Server *server, char *name, UA_String tagId){
     UA_Int32 revisionCounter = 1;
     UA_Variant_setScalar(&val, &revisionCounter, &UA_TYPES[UA_TYPES_INT32]);
     UA_Server_writeValue(server, currentChild, val);
+     */
 
     currentChild = findSingleChildNode(server, UA_QUALIFIEDNAME(2, "Model"), UA_NODEID_NUMERIC(0, UA_NS0ID_HASPROPERTY), pozyxTagNodeId);
-    UA_LocalizedText model = UA_LOCALIZEDTEXT("en-US", "Developer Tag");
+    UA_LocalizedText model = UA_LOCALIZEDTEXT("en-US", "Creator kit");
     UA_Variant_setScalar(&val, &model, &UA_TYPES[UA_TYPES_LOCALIZEDTEXT]);
     UA_Server_writeValue(server, currentChild, val);
 
@@ -118,6 +124,7 @@ static void addPozyxTag(UA_Server *server, char *name, UA_String tagId){
     UA_Variant_setScalar(&val, &manufacturer, &UA_TYPES[UA_TYPES_LOCALIZEDTEXT]);
     UA_Server_writeValue(server, currentChild, val);
 
+    /*
     currentChild = findSingleChildNode(server, UA_QUALIFIEDNAME(2, "HardwareRevision"), UA_NODEID_NUMERIC(0, UA_NS0ID_HASPROPERTY), pozyxTagNodeId);
     UA_String hardwareRevision = UA_STRING("v1.3");
     UA_Variant_setScalar(&val, &hardwareRevision, &UA_TYPES[UA_TYPES_STRING]);
@@ -127,14 +134,15 @@ static void addPozyxTag(UA_Server *server, char *name, UA_String tagId){
     UA_String deviceRevision = UA_STRING("v1.5");
     UA_Variant_setScalar(&val, &deviceRevision, &UA_TYPES[UA_TYPES_STRING]);
     UA_Server_writeValue(server, currentChild, val);
+     */
 
     currentChild = findSingleChildNode(server, UA_QUALIFIEDNAME(3, "DeviceName"), UA_NODEID_NUMERIC(0, UA_NS0ID_HASPROPERTY), pozyxTagNodeId);
-    UA_String deviceName = UA_STRING("Pozyx Developer Tag");
+    UA_String deviceName = UA_STRING("Pozyx Creator kit");
     UA_Variant_setScalar(&val, &deviceName, &UA_TYPES[UA_TYPES_STRING]);
     UA_Server_writeValue(server, currentChild, val);
 
     currentChild = findSingleChildNode(server, UA_QUALIFIEDNAME(2, "DeviceManual"), UA_NODEID_NUMERIC(0, UA_NS0ID_HASPROPERTY), pozyxTagNodeId);
-    UA_String deviceManual = UA_STRING("https://www.pozyx.io/shop/product/developer-tag-68");
+    UA_String deviceManual = UA_STRING("https://www.pozyx.io/shop/product/creator-kit-65");
     UA_Variant_setScalar(&val, &deviceManual, &UA_TYPES[UA_TYPES_STRING]);
     UA_Server_writeValue(server, currentChild, val);
 
@@ -196,24 +204,13 @@ static UA_StatusCode getSupportedLocationTypes(UA_Server *server,
                                                const UA_NodeId *objectId, void *objectContext,
                                                size_t inputSize, const UA_Variant *input,
                                                size_t outputSize, UA_Variant *output) {
+
+    /* without ExtensionObject, because enum is an UInt32 internally */
     UA_LocationTypeEnumeration type;
     UA_LocationTypeEnumeration_init(&type);
     type = UA_LOCATIONTYPEENUMERATION_LOCAL;
-    /*UA_ByteString *buf = UA_ByteString_new();
-    size_t msgSize = UA_LocationTypeEnumeration_calcSizeBinary(&type);
-    printf("\n%zu\n", msgSize);
-    UA_ByteString_allocBuffer(buf, msgSize);
-    memset(buf->data, 0, msgSize);
-    UA_Byte *bufPos = buf->data;
-    const UA_Byte *bufEnd = &buf->data[buf->length];
-    UA_LocationTypeEnumeration_encodeBinary(&type, &bufPos, bufEnd);*/
 
-    /*UA_ExtensionObject eoInput;
-    eoInput.content.encoded.body = *buf;
-    eoInput.content.encoded.typeId = UA_NODEID_NUMERIC(autoidNamespace, 3009);
-    eoInput.encoding = UA_EXTENSIONOBJECT_ENCODED_BYTESTRING;*/
     UA_Variant_setArrayCopy(output, &type, 1, &UA_TYPES_AUTOID[UA_TYPES_AUTOID_LOCATIONTYPEENUMERATION]);
-
 
     return UA_STATUSCODE_GOOD;
 }
@@ -221,37 +218,21 @@ static UA_StatusCode getSupportedLocationTypes(UA_Server *server,
 
 
 static UA_StatusCode
-scanPozyxTag(UA_Server *server,
-              const UA_NodeId *sessionId, void *sessionHandle,
-              const UA_NodeId *methodId, void *methodContext,
-              const UA_NodeId *objectId, void *objectContext,
-              size_t inputSize, const UA_Variant *input,
-              size_t outputSize, UA_Variant *output) {
+scanPozyx(UA_Server *server,
+          const UA_NodeId *sessionId, void *sessionHandle,
+          const UA_NodeId *methodId, void *methodContext,
+          const UA_NodeId *objectId, void *objectContext,
+          size_t inputSize, const UA_Variant *input,
+          size_t outputSize, UA_Variant *output) {
 
-    printf("rfidScanStarted\n");
     UA_ExtensionObject *eo = (UA_ExtensionObject *) input[0].data;
     UA_ScanSettings settings;
     UA_ScanSettings_init(&settings);
     size_t scanSettingsOffset = 0;
     UA_ByteString byteString = eo->content.encoded.body;
-
-    printf("%d, %d\n", eo->content.encoded.typeId.namespaceIndex, eo->content.encoded.typeId.identifier.numeric);
-    printf("%s", input[0].type->typeName);
     UA_ScanSettings_decodeBinary(&byteString, &scanSettingsOffset, &settings);
 
-    printf("hasLocationType: %d\n", settings.hasLocationType);
-    printf("duration: %f\n", settings.duration);
-    printf("cycles: %d\n", settings.cycles);
-    printf("dataAvailable: %d\n", settings.dataAvailable);
-    printf("locationType: %d\n", settings.hasLocationType);
-
     /*
-    printf("%zu\n", byteString.length);
-    for(size_t i=0; i<byteString.length; i++){
-        printf("%x", byteString.data[i]);
-    }
-    printf("\n");
-
     if(eo->encoding == UA_EXTENSIONOBJECT_ENCODED_BYTESTRING) {
 
         // workaround for optional field issue if optional field not
@@ -266,83 +247,69 @@ scanPozyxTag(UA_Server *server,
         }
         UA_ScanSettings_decodeBinary(&byteString, &scanSettingsOffset, &settings);
     }*/
-    UA_RtlsLocationResult res;
-    UA_RtlsLocationResult_init(&res);
 
-    res.hasLocation = false;
-    res.codeType = UA_STRING("RAW:BYTES");
-    res.scanData.switchField = 1;
-    res.scanData.byteString = UA_BYTESTRING("AD-CD-03-04");
-    res.timestamp = UA_DateTime_now();
-    res.location.switchField = 2;
-    res.location.local.x = 1.0;
-    res.location.local.y = 2.0;
-    res.location.local.z = 4.0;
-    res.location.local.timestamp = UA_DateTime_now();
-    res.speed = 8.0;
-    res.heading = 16.0;
-    res.rotation.yaw = 32.0;
-    res.rotation.pitch = 64.0;
-    res.rotation.roll = 128.0;
-    res.receiveTime = UA_DateTime_now();
-
-
-    printf("%zu\n", sizeof(UA_RtlsLocationResult));
-    UA_ByteString *buf = UA_ByteString_new();
-    size_t msgSize = UA_RtlsLocationResult_calcSizeBinary(&res);
-    printf("%zu\n", msgSize);
-    UA_ByteString_allocBuffer(buf, msgSize);
-    memset(buf->data, 0, msgSize);
-    UA_Byte *bufPos = buf->data;
-    const UA_Byte *bufEnd = &buf->data[buf->length];
-    UA_RtlsLocationResult_encodeBinary(&res, &bufPos, bufEnd);
-
-    for(size_t i=0; i<buf->length; i++){
-        printf("%02X", buf->data[i]);
+    size_t numAliveTags = getNumberAliveTags();
+    if(numAliveTags == 0) {
+        UA_AutoIdOperationStatusEnumeration st = UA_AUTOIDOPERATIONSTATUSENUMERATION_NO_IDENTIFIER;
+        UA_Variant_setScalarCopy(output + 1, &st,
+                                 &UA_TYPES_AUTOID[UA_TYPES_AUTOID_AUTOIDOPERATIONSTATUSENUMERATION]);
+        return UA_STATUSCODE_GOOD;
     }
-    printf("\n");
+    UA_ExtensionObject* eoTags = UA_Array_new(numAliveTags, &UA_TYPES[UA_TYPES_EXTENSIONOBJECT]);
+    for(size_t i = 0, j = 0; i < tagsPointer; i++) {
 
-    UA_RtlsLocationResult *resD = UA_RtlsLocationResult_new();
-    size_t offset = 0;
-    UA_RtlsLocationResult_decodeBinary(buf, &offset, resD);
+        UA_RtlsLocationResult res;
+        UA_RtlsLocationResult_init(&res);
 
-    printf("hasLocation: %d\n", resD->hasLocation);
-    printf("codeType: %s\n", resD->codeType.data);
-    printf("sd switchField: %d\n", resD->scanData.switchField);
-    printf("sd byteString: %s\n", resD->scanData.byteString.data);
-    printf("timestamp: %ld\n", resD->timestamp);
-    printf("location switchField: %d\n", resD->location.switchField);
-    printf("location local x: %f\n", resD->location.local.x);
-    printf("location local y: %f\n", resD->location.local.y);
-    printf("location local z: %f\n", resD->location.local.z);
-    printf("speed: %f\n", resD->speed);
-    printf("heading: %f\n", resD->heading);
-    printf("rotation pitch: %f\n", resD->rotation.pitch);
-    printf("receivetime: %ld\n", resD->receiveTime);
+        res.hasLocation = true;
+        res.codeType = UA_STRING("UID");
+        char sTagId[6];
+        sprintf(sTagId, "%d", tags[i].tagId);
 
+        res.scanData.switchField = 1;
+        res.scanData.byteString = UA_BYTESTRING(sTagId);
+        res.timestamp = UA_DateTime_now();
+        res.location.switchField = 2;
+        res.location.local.x = tags[i].coordinates.x;
+        res.location.local.y = tags[i].coordinates.y;
+        res.location.local.z = tags[i].coordinates.z;
+        res.location.local.timestamp = tags[i].timestamp;
+        res.rotation.yaw = tags[i].rotation.yaw;
+        res.rotation.pitch = tags[i].rotation.pitch;
+        res.rotation.roll = tags[i].rotation.roll;
 
-    printf("%zu\n", buf->length);
-    for(size_t j=0; j<buf->length; j++){
-        printf("%02X", buf->data[j]);
+        UA_ByteString *buf = UA_ByteString_new();
+        size_t msgSize = UA_RtlsLocationResult_calcSizeBinary(&res);
+        printf("%zu\n", msgSize);
+        UA_ByteString_allocBuffer(buf, msgSize);
+        memset(buf->data, 0, msgSize);
+        UA_Byte *bufPos = buf->data;
+        const UA_Byte *bufEnd = &buf->data[buf->length];
+        UA_RtlsLocationResult_encodeBinary(&res, &bufPos, bufEnd);
+
+        eoTags[i].encoding = UA_EXTENSIONOBJECT_ENCODED_BYTESTRING;
+        eoTags[i].content.encoded.typeId = UA_NODEID_NUMERIC(autoidNamespace, UA_TYPES_AUTOID[UA_TYPES_AUTOID_RTLSLOCATIONRESULT].binaryEncodingId);
+        eoTags[i].content.encoded.body = *buf;
     }
-
-    printf("\n");
-
-    UA_ExtensionObject *e = UA_ExtensionObject_new();
-    e->encoding = UA_EXTENSIONOBJECT_ENCODED_BYTESTRING;
-    e->content.encoded.typeId = UA_NODEID_NUMERIC(autoidNamespace, UA_TYPES_AUTOID[UA_TYPES_AUTOID_RTLSLOCATIONRESULT].binaryEncodingId);
-    e->content.encoded.body = *buf;
 
 
     UA_AutoIdOperationStatusEnumeration st;
     UA_AutoIdOperationStatusEnumeration_init(&st);
     st = UA_AUTOIDOPERATIONSTATUSENUMERATION_SUCCESS;
 
-    UA_Variant_setScalar(output, e, &UA_TYPES[UA_TYPES_EXTENSIONOBJECT]);
+    UA_Variant_setArrayCopy(output, eoTags, tagsPointer, &UA_TYPES[UA_TYPES_EXTENSIONOBJECT]);
     //UA_Variant_setArrayCopy(output, (UA_Variant*)e, 1, &UA_TYPES_AUTOID[UA_TYPES_AUTOID_RTLSLOCATIONRESULT]);
     UA_Variant_setScalarCopy(output+1, &st, &UA_TYPES_AUTOID[UA_TYPES_AUTOID_AUTOIDOPERATIONSTATUSENUMERATION]);
 
     return UA_STATUSCODE_GOOD;
+}
+
+static size_t getNumberAliveTags() {
+    size_t num = 0;
+    for(int i = 0; i < tagsPointer; i++){
+        if(tags[i].isAlive) num++;
+    }
+    return num;
 }
 
 /*
@@ -387,6 +354,7 @@ int pozyx_mqtt_config(void){
 
 int pozyx_mqtt_config(void){
     int sockfd = open_nb_socket(ADDRESS, PORT);
+    printf("mqtt socket: %d\n", sockfd);
 
     if(sockfd == -1){
         UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND, "Failed to open socket for MQTT connection");
@@ -397,13 +365,13 @@ int pozyx_mqtt_config(void){
     struct mqtt_client client;
     uint8_t sendbuf[2048]; // sendbuf should be large enough to hold multiple whole mqtt messages
     uint8_t recvbuf[4096]; // recvbuf should be large enough any whole mqtt message expected to be received
-    printf("%s\n", mqtt_error_str(mqtt_init(&client, sockfd, sendbuf, sizeof(sendbuf), recvbuf, sizeof(recvbuf), publish_callback)));
+    mqtt_init(&client, sockfd, sendbuf, sizeof(sendbuf), recvbuf, sizeof(recvbuf), publish_callback);
     // Create an anonymous session
     const char* client_id = NULL;
     // Ensure we have a clean session
     uint8_t connect_flags = MQTT_CONNECT_CLEAN_SESSION;
     // Send connection request to the broker.
-    printf("%s\n", mqtt_error_str(mqtt_connect(&client, client_id, NULL, NULL, 0, NULL, NULL, connect_flags, 400)));
+    mqtt_connect(&client, client_id, NULL, NULL, 0, NULL, NULL, connect_flags, 400);
 
     // check that we don't have any errors
     if (client.error != MQTT_OK) {
@@ -426,15 +394,65 @@ int pozyx_mqtt_config(void){
 
 void publish_callback(void** unused, struct mqtt_response_publish *published)
 {
-    // note that published->topic_name is NOT null-terminated (here we'll change it to a c-string)
-    char* topic_name = (char*) malloc((size_t) published->topic_name_size + 1);
-    memcpy(topic_name, published->topic_name, published->topic_name_size);
-    topic_name[published->topic_name_size] = '\0';
+    cJSON *jsonTag = cJSON_Parse((const char*) published->application_message);
+    printf("%s\n", cJSON_Print(jsonTag));
+    updateTagsArray((const char*) published->application_message);
+    cJSON_Delete(jsonTag);
+}
 
-    cJSON *json = cJSON_Parse((const char*) published->application_message);
-    printf("%s\n", cJSON_Print(json));
+void updateTagsArray(const char* json){
+    cJSON *jsonTag = cJSON_Parse(json);
+    cJSON *tagData = cJSON_GetArrayItem(jsonTag, 0);
+    cJSON *success = cJSON_GetObjectItemCaseSensitive(tagData, "success");
+    cJSON *alive = cJSON_GetObjectItemCaseSensitive(tagData, "alive");
 
-    free(topic_name);
+
+    cJSON *tagId = cJSON_GetObjectItemCaseSensitive(tagData, "tagId");
+    UA_Int32 tagIdNum = atoi(tagId->valuestring);
+    if(tagIdNum != CONNECTED_TAG_ID) {
+        UA_UInt16 index = getTagArrayIndex(tagIdNum);
+        if (!tagInArray(tagIdNum)) {
+            tagsPointer++;
+        }
+        if (cJSON_IsTrue(success) && cJSON_IsTrue(alive)) {
+
+            tags[index].tagId = tagIdNum;
+            tags[index].isAlive = true;
+            tags[index].timestamp = (UA_DateTime) (cJSON_GetObjectItemCaseSensitive(tagData, "timestamp"))->valuedouble;
+
+            cJSON *coordinates = cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(tagData, "data"),
+                                                                  "coordinates");
+            tags[index].coordinates.x = (UA_Double) cJSON_GetObjectItemCaseSensitive(coordinates, "x")->valueint;
+            tags[index].coordinates.y = (UA_Double) cJSON_GetObjectItemCaseSensitive(coordinates, "y")->valueint;
+            tags[index].coordinates.z = (UA_Double) cJSON_GetObjectItemCaseSensitive(coordinates, "z")->valueint;
+
+            cJSON *rotation = cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(tagData, "data"),
+                                                               "orientation");
+            tags[index].rotation.yaw = cJSON_GetObjectItemCaseSensitive(rotation, "yaw")->valuedouble;
+            tags[index].rotation.roll = cJSON_GetObjectItemCaseSensitive(rotation, "roll")->valuedouble;
+            tags[index].rotation.pitch = cJSON_GetObjectItemCaseSensitive(rotation, "pitch")->valuedouble;
+
+        }
+        else{
+            tags[index].isAlive = false;
+        }
+    }
+
+    cJSON_Delete(jsonTag);
+}
+
+UA_Boolean tagInArray(UA_Int32 tagId) {
+    for(UA_Int16 i = 0; i <= NUM_TAGS; i++){
+        if(tags[i].tagId == tagId) return true;
+    }
+    return false;
+}
+
+UA_UInt16 getTagArrayIndex(UA_Int32 tagId) {
+    for(UA_UInt16 i = 0; i < NUM_TAGS; i++){
+        if(tags[i].tagId == tagId) return i;
+    }
+    return tagsPointer;
 }
 
 void* client_refresher(void* client)
@@ -478,57 +496,29 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
+    tags = UA_calloc(NUM_TAGS, sizeof(TagData));
+    addPozyx(server);
 
 
-    addPozyxTag(server, "Pozyx Tag 0x6a26", UA_STRING("0x6a26"));
-    addPozyxTag(server, "Pozyx Tag 0x6a37", UA_STRING("0x6a37"));
-    addPozyxTag(server, "Pozyx Tag 0x6a28", UA_STRING("0x6a28"));
-    addPozyxTag(server, "Pozyx Tag 0x6a57", UA_STRING("0x6a57"));
-
-    pozyx_mqtt_config();
-
-    UA_Server_setMethodNode_callback(server, UA_NODEID_NUMERIC(autoidNamespace, 7055), scanPozyxTag);
+    UA_Server_setMethodNode_callback(server, UA_NODEID_NUMERIC(autoidNamespace, 7055), scanPozyx);
     UA_Server_setMethodNode_callback(server, UA_NODEID_NUMERIC(autoidNamespace, 7058), getSupportedLocationTypes);
 
     /*
-    UA_RtlsLocationResult r;
-    UA_ByteString *buf = UA_ByteString_new();
-    size_t msgSize = UA_RtlsLocationResult_calcSizeBinary(&r);
-    UA_ByteString_allocBuffer(buf, msgSize);
-    memset(buf->data, 0, msgSize);
+    while(1){
+        for(int i=0; i<NUM_TAGS; i++){
+            printf("tagId: %d\n", tags[i].tagId);
+            printf("timestamp: %ld\n", tags[i].timestamp);
+            printf("x: %f\n", tags[i].coordinates.x);
+            printf("y: %f\n", tags[i].coordinates.y);
+            printf("z: %f\n", tags[i].coordinates.z);
+            printf("yaw: %f\n", tags[i].rotation.yaw);
+            printf("roll: %f\n", tags[i].rotation.roll);
+            printf("pitch: %f\n\n", tags[i].rotation.pitch);
+        }
+        printf("printed all tags\n\n\n\n");
+    }*/
 
-    UA_Byte *bufSettingsPos = buf->data;
-    const UA_Byte *bufEnd = &buf->data[buf->length];
-
-    UA_RtlsLocationResult_encodeBinary(&r, &bufSettingsPos, bufEnd);
-*/
-/*
-    UA_ScanSettings *testSettings = (UA_ScanSettings *) UA_calloc(1, sizeof(UA_ScanSettings));
-    testSettings->duration = 1.7976931348623157E+308;
-    testSettings->cycles = 2147483647;
-    testSettings->dataAvailable = UA_TRUE;
-    testSettings->locationType = UA_LOCATIONTYPEENUMERATION_LOCAL;
-
-    UA_ByteString *buf = UA_ByteString_new();
-    size_t msgSize = UA_ScanSettings_calcSizeBinary(testSettings);
-    printf("%zu\n\n", msgSize);
-    UA_ByteString_allocBuffer(buf, msgSize);
-    memset(buf->data, 0, msgSize);
-    UA_Byte *bufSettingsPos = buf->data;
-    const UA_Byte *bufEnd = &buf->data[buf->length];
-    UA_ScanSettings_encodeBinary(testSettings, &bufSettingsPos, bufEnd);
-
-    for(size_t i = 0; i < buf->length; i++){
-        printf("%02X", buf->data[i]);
-    }
-    printf("\n %zu \n", buf->length);
-
-    UA_ExtensionObject eoInput;
-    eoInput.content.encoded.body = *buf;
-    eoInput.content.encoded.typeId = UA_NODEID_NUMERIC(autoidNamespace, 3010);
-    eoInput.encoding = UA_EXTENSIONOBJECT_ENCODED_BYTESTRING;
-    UA_Variant params;
-    UA_Variant_setScalar(&params, &eoInput, &UA_TYPES[UA_TYPES_EXTENSIONOBJECT]);
+    /*
 
     UA_CallMethodRequest callMethodRequest;
     UA_CallMethodRequest_init(&callMethodRequest);
@@ -542,6 +532,8 @@ int main(int argc, char** argv) {
     callMethodRequest.inputArguments = &params;
     UA_Server_call(server, &callMethodRequest);
 */
+
+    pozyx_mqtt_config();
     retval = UA_Server_run(server, &serverRunning);
 
     UA_Server_delete(server);
