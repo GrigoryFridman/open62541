@@ -28,29 +28,17 @@
 
 #define ADDRESS     "localhost"
 #define PORT        "1883"
-#define CLIENTID    "ExampleClientSub"
 #define TOPIC       "tags"
-#define PAYLOAD     "Hello World!"
-#define QOS         1
-#define TIMEOUT     10000L
 
-
-static int pozyx_mqtt_config(void);
 void publish_callback(void** unused, struct mqtt_response_publish *published);
-void* client_refresher(void* client);
-
+void client_refresher(UA_Server *server, void* client);
 void updateTagsArray(const char* json);
-
 UA_UInt16 getTagArrayIndex(UA_Int32 tagId);
-
 UA_Boolean tagInArray(UA_Int32 tagId);
-
-static size_t getNumberAliveTags();
-
+static size_t getNumberAliveTags(void);
 UA_UInt16 tagsPointer = 0;
 
 UA_UInt16 autoidNamespace;
-
 
 static UA_NodeId findSingleChildNode(UA_Server *server, UA_QualifiedName targetName, UA_NodeId referenceTypeId, UA_NodeId startingNode){
     UA_NodeId resultNodeId = UA_NODEID_NULL;
@@ -257,54 +245,53 @@ scanPozyx(UA_Server *server,
     }
     UA_ExtensionObject* eoTags = UA_Array_new(numAliveTags, &UA_TYPES[UA_TYPES_EXTENSIONOBJECT]);
     for(size_t i = 0, j = 0; i < tagsPointer; i++) {
+        if(tags[i].isAlive){
+            UA_RtlsLocationResult res;
+            UA_RtlsLocationResult_init(&res);
 
-        UA_RtlsLocationResult res;
-        UA_RtlsLocationResult_init(&res);
+            res.hasLocation = true;
+            res.codeType = UA_STRING("UID");
+            char sTagId[6];
+            sprintf(sTagId, "%d", tags[i].tagId);
 
-        res.hasLocation = true;
-        res.codeType = UA_STRING("UID");
-        char sTagId[6];
-        sprintf(sTagId, "%d", tags[i].tagId);
+            res.scanData.switchField = 1;
+            res.scanData.byteString = UA_BYTESTRING(sTagId);
+            res.timestamp = UA_DateTime_now();
+            res.location.switchField = 2;
+            res.location.local.x = tags[i].coordinates.x;
+            res.location.local.y = tags[i].coordinates.y;
+            res.location.local.z = tags[i].coordinates.z;
+            res.location.local.timestamp = tags[i].timestamp;
+            res.rotation.yaw = tags[i].rotation.yaw;
+            res.rotation.pitch = tags[i].rotation.pitch;
+            res.rotation.roll = tags[i].rotation.roll;
 
-        res.scanData.switchField = 1;
-        res.scanData.byteString = UA_BYTESTRING(sTagId);
-        res.timestamp = UA_DateTime_now();
-        res.location.switchField = 2;
-        res.location.local.x = tags[i].coordinates.x;
-        res.location.local.y = tags[i].coordinates.y;
-        res.location.local.z = tags[i].coordinates.z;
-        res.location.local.timestamp = tags[i].timestamp;
-        res.rotation.yaw = tags[i].rotation.yaw;
-        res.rotation.pitch = tags[i].rotation.pitch;
-        res.rotation.roll = tags[i].rotation.roll;
+            UA_ByteString *buf = UA_ByteString_new();
+            size_t msgSize = UA_RtlsLocationResult_calcSizeBinary(&res);
+            UA_ByteString_allocBuffer(buf, msgSize);
+            memset(buf->data, 0, msgSize);
+            UA_Byte *bufPos = buf->data;
+            const UA_Byte *bufEnd = &buf->data[buf->length];
+            UA_RtlsLocationResult_encodeBinary(&res, &bufPos, bufEnd);
 
-        UA_ByteString *buf = UA_ByteString_new();
-        size_t msgSize = UA_RtlsLocationResult_calcSizeBinary(&res);
-        printf("%zu\n", msgSize);
-        UA_ByteString_allocBuffer(buf, msgSize);
-        memset(buf->data, 0, msgSize);
-        UA_Byte *bufPos = buf->data;
-        const UA_Byte *bufEnd = &buf->data[buf->length];
-        UA_RtlsLocationResult_encodeBinary(&res, &bufPos, bufEnd);
-
-        eoTags[i].encoding = UA_EXTENSIONOBJECT_ENCODED_BYTESTRING;
-        eoTags[i].content.encoded.typeId = UA_NODEID_NUMERIC(autoidNamespace, UA_TYPES_AUTOID[UA_TYPES_AUTOID_RTLSLOCATIONRESULT].binaryEncodingId);
-        eoTags[i].content.encoded.body = *buf;
+            eoTags[j].encoding = UA_EXTENSIONOBJECT_ENCODED_BYTESTRING;
+            eoTags[j].content.encoded.typeId = UA_NODEID_NUMERIC(autoidNamespace, UA_TYPES_AUTOID[UA_TYPES_AUTOID_RTLSLOCATIONRESULT].binaryEncodingId);
+            eoTags[j].content.encoded.body = *buf;
+            j++;
+        }
     }
 
 
-    UA_AutoIdOperationStatusEnumeration st;
-    UA_AutoIdOperationStatusEnumeration_init(&st);
-    st = UA_AUTOIDOPERATIONSTATUSENUMERATION_SUCCESS;
+    UA_AutoIdOperationStatusEnumeration st = UA_AUTOIDOPERATIONSTATUSENUMERATION_SUCCESS;
 
-    UA_Variant_setArrayCopy(output, eoTags, tagsPointer, &UA_TYPES[UA_TYPES_EXTENSIONOBJECT]);
+    UA_Variant_setArrayCopy(output, eoTags, numAliveTags, &UA_TYPES[UA_TYPES_EXTENSIONOBJECT]);
     //UA_Variant_setArrayCopy(output, (UA_Variant*)e, 1, &UA_TYPES_AUTOID[UA_TYPES_AUTOID_RTLSLOCATIONRESULT]);
     UA_Variant_setScalarCopy(output+1, &st, &UA_TYPES_AUTOID[UA_TYPES_AUTOID_AUTOIDOPERATIONSTATUSENUMERATION]);
 
     return UA_STATUSCODE_GOOD;
 }
 
-static size_t getNumberAliveTags() {
+static size_t getNumberAliveTags(void) {
     size_t num = 0;
     for(int i = 0; i < tagsPointer; i++){
         if(tags[i].isAlive) num++;
@@ -312,92 +299,13 @@ static size_t getNumberAliveTags() {
     return num;
 }
 
-/*
-void conn_lost(void *context, char *cause){
-    printf("\nConnection lost. Cause: %s\n", cause);
-}
-
-int msg_arrvd(void *context, char *topicname, int topicLen, MQTTClient_message *message){
-    char* payloadptr;
-    payloadptr = (char*) message->payload;
-    cJSON *json = cJSON_Parse(payloadptr);
-    printf("%s\n", cJSON_Print(json));
-    MQTTClient_freeMessage(&message);
-    MQTTClient_free(topicname);
-    return 1;
-}
-
-void delivered(void *context, MQTTClient_deliveryToken dt){
-    printf("Message with token value %d delivery confirmed\n", dt);
-    deliveredtoken = dt;
-}
-
-int pozyx_mqtt_config(void){
-    MQTTClient client;
-    MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
-    int rc;
-
-    MQTTClient_create(&client, ADDRESS, CLIENTID, MQTTCLIENT_PERSISTENCE_NONE, NULL);
-    conn_opts.keepAliveInterval = 20;
-    conn_opts.cleansession = 1;
-
-    MQTTClient_setCallbacks(client, NULL, conn_lost, msg_arrvd, delivered);
-
-    if((rc = MQTTClient_connect(client, &conn_opts)) != MQTTCLIENT_SUCCESS){
-        UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND, "Failed to connect to the MQTT Broker, return code %d", rc);
-        return rc;
-    }
-    printf("Subscribing to topic %s for client %s using QoS%d\n", TOPIC, CLIENTID, QOS);
-    MQTTClient_subscribe(client, TOPIC, QOS);
-    return rc;
-}*/
-
-int pozyx_mqtt_config(void){
-    int sockfd = open_nb_socket(ADDRESS, PORT);
-    printf("mqtt socket: %d\n", sockfd);
-
-    if(sockfd == -1){
-        UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND, "Failed to open socket for MQTT connection");
-        return -1;
-    }
-
-    // setup a client
-    struct mqtt_client client;
-    uint8_t sendbuf[2048]; // sendbuf should be large enough to hold multiple whole mqtt messages
-    uint8_t recvbuf[4096]; // recvbuf should be large enough any whole mqtt message expected to be received
-    mqtt_init(&client, sockfd, sendbuf, sizeof(sendbuf), recvbuf, sizeof(recvbuf), publish_callback);
-    // Create an anonymous session
-    const char* client_id = NULL;
-    // Ensure we have a clean session
-    uint8_t connect_flags = MQTT_CONNECT_CLEAN_SESSION;
-    // Send connection request to the broker.
-    mqtt_connect(&client, client_id, NULL, NULL, 0, NULL, NULL, connect_flags, 400);
-
-    // check that we don't have any errors
-    if (client.error != MQTT_OK) {
-        UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND, "Failed to create MQTT client: %s", mqtt_error_str(client.error));
-        return -1;
-    }
-
-
-    // start a thread to refresh the client (handle egress and ingree client traffic)
-    pthread_t client_daemon;
-    if(pthread_create(&client_daemon, NULL, client_refresher, &client)) {
-        UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND, "Failed to to start MQTT client daemon");
-        return -1;
-    }
-
-    // subscribe
-    mqtt_subscribe(&client, TOPIC, 0);
-    return 0;
-}
 
 void publish_callback(void** unused, struct mqtt_response_publish *published)
 {
-    cJSON *jsonTag = cJSON_Parse((const char*) published->application_message);
-    printf("%s\n", cJSON_Print(jsonTag));
+    //cJSON *jsonTag = cJSON_Parse((const char*) published->application_message);
+    //printf("%s\n", cJSON_Print(jsonTag));
     updateTagsArray((const char*) published->application_message);
-    cJSON_Delete(jsonTag);
+    //cJSON_Delete(jsonTag);
 }
 
 void updateTagsArray(const char* json){
@@ -406,64 +314,70 @@ void updateTagsArray(const char* json){
     cJSON *success = cJSON_GetObjectItemCaseSensitive(tagData, "success");
     cJSON *alive = cJSON_GetObjectItemCaseSensitive(tagData, "alive");
 
-
     cJSON *tagId = cJSON_GetObjectItemCaseSensitive(tagData, "tagId");
-    UA_Int32 tagIdNum = atoi(tagId->valuestring);
-    if(tagIdNum != CONNECTED_TAG_ID) {
-        UA_UInt16 index = getTagArrayIndex(tagIdNum);
-        if (!tagInArray(tagIdNum)) {
-            tagsPointer++;
-        }
-        if (cJSON_IsTrue(success) && cJSON_IsTrue(alive)) {
+    if(cJSON_IsString(tagId)) {
+        UA_Int32 tagIdNum = atoi(tagId->valuestring);
+        if (tagIdNum != CONNECTED_TAG_ID) {
+            UA_UInt16 index = getTagArrayIndex(tagIdNum);
+            if (!tagInArray(tagIdNum)) {
+                tagsPointer++;
+            }
+            if (cJSON_IsTrue(success) && cJSON_IsTrue(alive)) {
 
-            tags[index].tagId = tagIdNum;
-            tags[index].isAlive = true;
-            tags[index].timestamp = (UA_DateTime) (cJSON_GetObjectItemCaseSensitive(tagData, "timestamp"))->valuedouble;
+                tags[index].tagId = tagIdNum;
+                tags[index].isAlive = true;
+                tags[index].timestamp = (UA_DateTime) (cJSON_GetObjectItemCaseSensitive(tagData,
+                                                                                        "timestamp"))->valuedouble;
 
-            cJSON *coordinates = cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(tagData, "data"),
-                                                                  "coordinates");
-            tags[index].coordinates.x = (UA_Double) cJSON_GetObjectItemCaseSensitive(coordinates, "x")->valueint;
-            tags[index].coordinates.y = (UA_Double) cJSON_GetObjectItemCaseSensitive(coordinates, "y")->valueint;
-            tags[index].coordinates.z = (UA_Double) cJSON_GetObjectItemCaseSensitive(coordinates, "z")->valueint;
+                cJSON *coordinates = cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(tagData, "data"),
+                                                                      "coordinates");
+                tags[index].coordinates.x = (UA_Double) cJSON_GetObjectItemCaseSensitive(coordinates, "x")->valueint;
+                tags[index].coordinates.y = (UA_Double) cJSON_GetObjectItemCaseSensitive(coordinates, "y")->valueint;
+                tags[index].coordinates.z = (UA_Double) cJSON_GetObjectItemCaseSensitive(coordinates, "z")->valueint;
 
-            cJSON *rotation = cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(tagData, "data"),
-                                                               "orientation");
-            tags[index].rotation.yaw = cJSON_GetObjectItemCaseSensitive(rotation, "yaw")->valuedouble;
-            tags[index].rotation.roll = cJSON_GetObjectItemCaseSensitive(rotation, "roll")->valuedouble;
-            tags[index].rotation.pitch = cJSON_GetObjectItemCaseSensitive(rotation, "pitch")->valuedouble;
+                cJSON *rotation = cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(tagData, "data"),
+                                                                   "orientation");
+                tags[index].rotation.yaw = cJSON_GetObjectItemCaseSensitive(rotation, "yaw")->valuedouble;
+                tags[index].rotation.roll = cJSON_GetObjectItemCaseSensitive(rotation, "roll")->valuedouble;
+                tags[index].rotation.pitch = cJSON_GetObjectItemCaseSensitive(rotation, "pitch")->valuedouble;
 
-        }
-        else{
-            tags[index].isAlive = false;
+            } else {
+                tags[index].tagId = 0;
+                tags[index].isAlive = false;
+                tags[index].timestamp = 0;
+                tags[index].coordinates.x = 0;
+                tags[index].coordinates.y = 0;
+                tags[index].coordinates.z = 0;
+                tags[index].rotation.yaw = 0;
+                tags[index].rotation.roll = 0;
+                tags[index].rotation.pitch = 0;
+            }
         }
     }
-
     cJSON_Delete(jsonTag);
 }
 
 UA_Boolean tagInArray(UA_Int32 tagId) {
-    for(UA_Int16 i = 0; i <= NUM_TAGS; i++){
+    for(UA_UInt16 i = 0; i < tagsPointer; i++){
         if(tags[i].tagId == tagId) return true;
     }
     return false;
 }
 
+
 UA_UInt16 getTagArrayIndex(UA_Int32 tagId) {
-    for(UA_UInt16 i = 0; i < NUM_TAGS; i++){
+    for(UA_UInt16 i = 0; i < tagsPointer; i++){
         if(tags[i].tagId == tagId) return i;
     }
     return tagsPointer;
 }
 
-void* client_refresher(void* client)
+
+void client_refresher(UA_Server *server, void* client)
 {
-    while(1)
-    {
-        mqtt_sync((struct mqtt_client*) client);
-        usleep(100000U);
-    }
-    return NULL;
+    mqtt_sync((struct mqtt_client*) client);
 }
+
 
 UA_Boolean serverRunning = true;
 
@@ -499,41 +413,47 @@ int main(int argc, char** argv) {
     tags = UA_calloc(NUM_TAGS, sizeof(TagData));
     addPozyx(server);
 
+    int sockfd = open_nb_socket(ADDRESS, PORT);
+    printf("mqtt socket: %d\n", sockfd);
+
+    if(sockfd == -1){
+        UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND, "Failed to open socket for MQTT connection");
+        return -1;
+    }
+    struct mqtt_client client;
+    // setup a client
+    uint8_t sendbuf[2048]; // sendbuf should be large enough to hold multiple whole mqtt messages
+    uint8_t recvbuf[4096]; // recvbuf should be large enough any whole mqtt message expected to be received
+    mqtt_init(&client, sockfd, sendbuf, sizeof(sendbuf), recvbuf, sizeof(recvbuf), publish_callback);
+    // Create an anonymous session
+    const char* client_id = NULL;
+    // Ensure we have a clean session
+    uint8_t connect_flags = MQTT_CONNECT_CLEAN_SESSION;
+    // Send connection request to the broker.
+    mqtt_connect(&client, client_id, NULL, NULL, 0, NULL, NULL, connect_flags, 400);
+
+    // check that we don't have any errors
+    if (client.error != MQTT_OK) {
+        UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND, "Failed to create MQTT client: %s", mqtt_error_str(client.error));
+        return -1;
+    }
+
+
+    // start a thread to refresh the client (handle egress and ingree client traffic)
+    /*pthread_t client_daemon;
+    if(pthread_create(&client_daemon, NULL, client_refresher, &client)) {
+        UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND, "Failed to to start MQTT client daemon");
+        return -1;
+    }
+
+    // subscribe*/
+    mqtt_subscribe(&client, TOPIC, 0);
 
     UA_Server_setMethodNode_callback(server, UA_NODEID_NUMERIC(autoidNamespace, 7055), scanPozyx);
     UA_Server_setMethodNode_callback(server, UA_NODEID_NUMERIC(autoidNamespace, 7058), getSupportedLocationTypes);
 
-    /*
-    while(1){
-        for(int i=0; i<NUM_TAGS; i++){
-            printf("tagId: %d\n", tags[i].tagId);
-            printf("timestamp: %ld\n", tags[i].timestamp);
-            printf("x: %f\n", tags[i].coordinates.x);
-            printf("y: %f\n", tags[i].coordinates.y);
-            printf("z: %f\n", tags[i].coordinates.z);
-            printf("yaw: %f\n", tags[i].rotation.yaw);
-            printf("roll: %f\n", tags[i].rotation.roll);
-            printf("pitch: %f\n\n", tags[i].rotation.pitch);
-        }
-        printf("printed all tags\n\n\n\n");
-    }*/
+    UA_Server_addRepeatedCallback(server, client_refresher, &client, 200, NULL);
 
-    /*
-
-    UA_CallMethodRequest callMethodRequest;
-    UA_CallMethodRequest_init(&callMethodRequest);
-    callMethodRequest.inputArgumentsSize = 1;
-
-    UA_NodeId n = findSingleChildNode(server, UA_QUALIFIEDNAME(1, "Pozyx Tag 0x6a26"), UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT), UA_NODEID_NUMERIC(2, 5001));
-    printf("NodeId: %d, %d", n.namespaceIndex, n.identifier.numeric);
-
-    callMethodRequest.objectId = n;
-    callMethodRequest.methodId = UA_NODEID_NUMERIC(autoidNamespace, 7055);
-    callMethodRequest.inputArguments = &params;
-    UA_Server_call(server, &callMethodRequest);
-*/
-
-    pozyx_mqtt_config();
     retval = UA_Server_run(server, &serverRunning);
 
     UA_Server_delete(server);
