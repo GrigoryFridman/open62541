@@ -2273,6 +2273,7 @@
         <References>
             <Reference ReferenceType="HasSubtype" IsForward="false">ns=1;i=1004</Reference>
             <Reference ReferenceType="HasProperty">ns=1;i=6228</Reference>
+            <Reference ReferenceType="GeneratesEvent" IsForward="false">ns=1;i=1012</Reference>
         </References>
     </UAObjectType>
     <UAVariable DataType="RtlsLocationResult" ParentNodeId="ns=1;i=1014" ValueRank="1" NodeId="ns=1;i=6228" BrowseName="1:ScanResult" UserAccessLevel="3" AccessLevel="3">
@@ -4519,6 +4520,7 @@
             <Reference ReferenceType="HasSubtype" IsForward="false">ns=1;i=1001</Reference>
             <Reference ReferenceType="HasComponent">ns=1;i=7055</Reference>
             <Reference ReferenceType="HasProperty">ns=1;i=6215</Reference>
+            <Reference ReferenceType="GeneratesEvent">ns=1;i=1014</Reference>
         </References>
     </UAObjectType>
     <UAVariable DataType="EUInformation" ParentNodeId="ns=1;i=1012" NodeId="ns=1;i=6214" BrowseName="1:GeographicalUnit" UserAccessLevel="3" AccessLevel="3">

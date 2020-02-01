@@ -250,12 +250,12 @@ scanPozyx(UA_Server *server,
             UA_RtlsLocationResult_init(&res);
 
             res.hasLocation = true;
-            res.codeType = UA_STRING("UID");
+            res.codeType = UA_STRING("CUSTOM:TAGID");
             char sTagId[6];
             sprintf(sTagId, "%d", tags[i].tagId);
 
-            res.scanData.switchField = 1;
-            res.scanData.byteString = UA_BYTESTRING(sTagId);
+            res.scanData.switchField = 2;
+            res.scanData.string = UA_STRING(sTagId);
             res.timestamp = UA_DateTime_now();
             res.location.switchField = 2;
             res.location.local.x = tags[i].coordinates.x;
@@ -287,6 +287,73 @@ scanPozyx(UA_Server *server,
     UA_Variant_setArrayCopy(output, eoTags, numAliveTags, &UA_TYPES[UA_TYPES_EXTENSIONOBJECT]);
     //UA_Variant_setArrayCopy(output, (UA_Variant*)e, 1, &UA_TYPES_AUTOID[UA_TYPES_AUTOID_RTLSLOCATIONRESULT]);
     UA_Variant_setScalarCopy(output+1, &st, &UA_TYPES_AUTOID[UA_TYPES_AUTOID_AUTOIDOPERATIONSTATUSENUMERATION]);
+
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode
+getLocationPozyx(UA_Server *server,
+          const UA_NodeId *sessionId, void *sessionHandle,
+          const UA_NodeId *methodId, void *methodContext,
+          const UA_NodeId *objectId, void *objectContext,
+          size_t inputSize, const UA_Variant *input,
+          size_t outputSize, UA_Variant *output) {
+
+    size_t scOffset = 0;
+    UA_ExtensionObject *scanDataEo = (UA_ExtensionObject *) input[0].data;
+    UA_ScanData scanData;
+    UA_ScanData_init(&scanData);
+    UA_ByteString sdByteString = scanDataEo->content.encoded.body;
+    UA_ScanData_decodeBinary(&sdByteString, &scOffset, &scanData);
+
+    UA_LocationTypeEnumeration locationType = *(UA_LocationTypeEnumeration *) input[1].data;
+
+    UA_String codeType = *(UA_String *) input[2].data;
+
+    if(strcmp((const char*) codeType.data, "CUSTOM:TAGID") || scanData.switchField != 2 || locationType != UA_LOCATIONTYPEENUMERATION_LOCAL)
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+
+    char* ptr;
+    UA_Int32 tagId = (UA_Int32) strtol((const char *) scanData.string.data, &ptr, 10);
+    if(tagId == 0) return UA_STATUSCODE_BADINVALIDARGUMENT;
+
+    UA_UInt16 i = getTagArrayIndex(tagId);
+    if(i == tagsPointer) return UA_STATUSCODE_BADINVALIDSTATE;
+    if(!tags[i].isAlive) return UA_STATUSCODE_BADINVALIDSTATE;
+
+    UA_RtlsLocationResult res;
+    UA_RtlsLocationResult_init(&res);
+
+    res.hasLocation = true;
+    res.codeType = UA_STRING("CUSTOM:TAGID");
+
+    res.scanData.switchField = 2;
+    res.scanData.string = scanData.string;
+    res.timestamp = UA_DateTime_now();
+    res.location.switchField = 2;
+    res.location.local.x = tags[i].coordinates.x;
+    res.location.local.y = tags[i].coordinates.y;
+    res.location.local.z = tags[i].coordinates.z;
+    res.location.local.timestamp = tags[i].timestamp;
+    res.rotation.yaw = tags[i].rotation.yaw;
+    res.rotation.pitch = tags[i].rotation.pitch;
+    res.rotation.roll = tags[i].rotation.roll;
+
+    UA_ByteString *buf = UA_ByteString_new();
+    size_t msgSize = UA_RtlsLocationResult_calcSizeBinary(&res);
+    UA_ByteString_allocBuffer(buf, msgSize);
+    memset(buf->data, 0, msgSize);
+    UA_Byte *bufPos = buf->data;
+    const UA_Byte *bufEnd = &buf->data[buf->length];
+    UA_RtlsLocationResult_encodeBinary(&res, &bufPos, bufEnd);
+
+    UA_ExtensionObject *resEo = UA_ExtensionObject_new();
+    UA_ExtensionObject_init(resEo);
+    resEo->encoding = UA_EXTENSIONOBJECT_ENCODED_BYTESTRING;
+    resEo->content.encoded.typeId = UA_NODEID_NUMERIC(autoidNamespace, UA_TYPES_AUTOID[UA_TYPES_AUTOID_RTLSLOCATIONRESULT].binaryEncodingId);
+    resEo->content.encoded.body = *buf;
+
+    UA_Variant_setScalarCopy(output, &resEo, &UA_TYPES[UA_TYPES_EXTENSIONOBJECT]);
 
     return UA_STATUSCODE_GOOD;
 }
@@ -342,7 +409,7 @@ void updateTagsArray(const char* json){
                 tags[index].rotation.pitch = cJSON_GetObjectItemCaseSensitive(rotation, "pitch")->valuedouble;
 
             } else {
-                tags[index].tagId = 0;
+                tags[index].tagId = tagIdNum;
                 tags[index].isAlive = false;
                 tags[index].timestamp = 0;
                 tags[index].coordinates.x = 0;
@@ -418,7 +485,7 @@ int main(int argc, char** argv) {
 
     if(sockfd == -1){
         UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND, "Failed to open socket for MQTT connection");
-        return -1;
+        return EXIT_FAILURE;
     }
     struct mqtt_client client;
     // setup a client
@@ -435,7 +502,7 @@ int main(int argc, char** argv) {
     // check that we don't have any errors
     if (client.error != MQTT_OK) {
         UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND, "Failed to create MQTT client: %s", mqtt_error_str(client.error));
-        return -1;
+        return EXIT_FAILURE;
     }
 
 
@@ -444,13 +511,14 @@ int main(int argc, char** argv) {
     if(pthread_create(&client_daemon, NULL, client_refresher, &client)) {
         UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND, "Failed to to start MQTT client daemon");
         return -1;
-    }
+    }*/
 
-    // subscribe*/
+    // subscribe
     mqtt_subscribe(&client, TOPIC, 0);
 
     UA_Server_setMethodNode_callback(server, UA_NODEID_NUMERIC(autoidNamespace, 7055), scanPozyx);
     UA_Server_setMethodNode_callback(server, UA_NODEID_NUMERIC(autoidNamespace, 7058), getSupportedLocationTypes);
+    UA_Server_setMethodNode_callback(server, UA_NODEID_NUMERIC(autoidNamespace, 7056), getLocationPozyx);
 
     UA_Server_addRepeatedCallback(server, client_refresher, &client, 200, NULL);
 
