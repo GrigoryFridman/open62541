@@ -20,6 +20,7 @@ RfidScanResult,3007,DataType
 Location,3008,DataType
 LocationTypeEnumeration,3009,DataType
 ScanSettings,3010,DataType
+ScanSettingsWithoutOpt,3017,DataType
 AntennaNameIdPair,3011,DataType
 NmeaCoordinateString,3012,DataType
 AutoIdOperationStatusEnumeration,3013,DataType
@@ -34,6 +35,7 @@ ScanDataEpc,3024,DataType
 OpticalScanResult,3026,DataType
 WGS84Coordinate,3027,DataType
 RtlsLocationResult,3028,DataType
+RtlsLocationResultWithoutOpt,3018,DataType
 Rotation,3029,DataType
 OpticalVerifierScanResult,3030,DataType
 CodeTypeDataType,3031,DataType
@@ -53,6 +55,8 @@ Location_Encoding_DefaultBinary,5013,Object
 Location_Encoding_DefaultXml,5014,Object
 ScanSettings_Encoding_DefaultBinary,5015,Object
 ScanSettings_Encoding_DefaultXml,5016,Object
+ScanSettingsWithoutOpt_Encoding_DefaultBinary,5022,Object
+ScanSettingsWithoutOpt_Encoding_DefaultXml,5023,Object
 AntennaNameIdPair_Encoding_DefaultBinary,5017,Object
 AntennaNameIdPair_Encoding_DefaultXml,5018,Object
 Server_Namespaces_http___opcfoundation_org_UA_AutoID_,5019,Object
@@ -73,6 +77,8 @@ WGS84Coordinate_Encoding_DefaultBinary,5046,Object
 WGS84Coordinate_Encoding_DefaultXml,5047,Object
 RtlsLocationResult_Encoding_DefaultBinary,5048,Object
 RtlsLocationResult_Encoding_DefaultXml,5049,Object
+RtlsLocationResultWithoutOpt_Encoding_DefaultBinary,5024,Object
+RtlsLocationResultWithoutOpt_Encoding_DefaultXml,5025,Object
 Rotation_Encoding_DefaultBinary,5050,Object
 Rotation_Encoding_DefaultXml,5051,Object
 OpticalVerifierScanResult_Encoding_DefaultBinary,5052,Object
@@ -123,6 +129,8 @@ RfidScanEventType_ScanResult,6042,Variable
 RfidReaderDeviceType_Scan_OutputArguments,6043,Variable
 AutoID_ScanSettings,6044,Variable
 AutoID_ScanSettings,6045,Variable
+AutoID_ScanSettingsWithoutOpt,6086,Variable
+AutoID_ScanSettingsWithoutOpt,6087,Variable
 AutoID_AntennaNameIdPair,6046,Variable
 AutoID_AntennaNameIdPair,6047,Variable
 RfidReaderDeviceType_AntennaNames,6048,Variable
@@ -196,8 +204,12 @@ RtlsDeviceType_RotationalUnit,6216,Variable
 RtlsDeviceType_LengthUnit,6217,Variable
 RtlsDeviceType_Scan_InputArguments,6218,Variable
 RtlsDeviceType_Scan_OutputArguments,6219,Variable
+RtlsDeviceType_ScanWithoutOpt_InputArguments,6231,Variable
+RtlsDeviceType_ScanWithoutOpt_OutputArguments,6232,Variable
 AutoID_RtlsLocationResult,6220,Variable
 AutoID_RtlsLocationResult,6221,Variable
+AutoID_RtlsLocationResultWithoutOpt,6088,Variable
+AutoID_RtlsLocationResultWithoutOpt,6089,Variable
 AutoID_Rotation,6222,Variable
 AutoID_Rotation,6223,Variable
 RtlsDeviceType_GetLocation_InputArguments,6224,Variable
@@ -233,6 +245,7 @@ AutoIdDeviceType_GetDeviceLocation,7042,Method
 OpticalReaderDeviceType_Scan,7043,Method
 OpticalVerifierDeviceType_Scan,7054,Method
 RtlsDeviceType_Scan,7055,Method
+RtlsDeviceType_ScanWithoutOpt,7059,Method
 RtlsDeviceType_GetLocation,7056,Method
 RtlsDeviceType_GetUnits,7057,Method
 RtlsDeviceType_GetSupportedLocationTypes,7058,Method

@@ -194,13 +194,12 @@ if(UA_NAMESPACE_ZERO STREQUAL "FULL")
     file(GLOB MQTT_C_SOURCES
             "mqtt-c/src/*.c")
 
-    add_example(server_nodeset_autoid server_nodeset_autoid.c
+    add_example(server_nodeset_autoid pozyx/server_nodeset_autoid.c
             ${UA_NODESET_DI_SOURCES}
             ${UA_TYPES_DI_SOURCES}
             ${UA_NODESET_AUTOID_SOURCES}
             ${UA_TYPES_AUTOID_SOURCES}
             ${CMAKE_SOURCE_DIR}/examples/nodeset/json/cJSON.c
-            #${PAHO_MQTT_SOURCES}
             ${MQTT_C_SOURCES}
             )
 

@@ -14,13 +14,14 @@
 #include "open62541/namespace_autoid_generated.h"
 #include "open62541/types_autoid_generated_encoding_binary.h"
 #include "open62541/types_autoid_generated_handling.h"
+#include "open62541/autoid_nodeids.h"
 
 #include "server_nodeset_autoid.h"
 
-#include "mqtt-c/include/mqtt.h"
-#include "mqtt-c/include/posix_sockets.h"
+#include "nodeset/mqtt-c/include/mqtt.h"
+#include "nodeset/mqtt-c/include/posix_sockets.h"
 
-#include "json/cJSON.h"
+#include "nodeset/json/cJSON.h"
 
 #include <signal.h>
 #include <stdlib.h>
@@ -36,6 +37,7 @@ void updateTagsArray(const char* json);
 UA_UInt16 getTagArrayIndex(UA_Int32 tagId);
 UA_Boolean tagInArray(UA_Int32 tagId);
 static size_t getNumberAliveTags(void);
+
 UA_UInt16 tagsPointer = 0;
 
 UA_UInt16 autoidNamespace;
@@ -69,7 +71,7 @@ static UA_NodeId findSingleChildNode(UA_Server *server, UA_QualifiedName targetN
 }
 
 
-static void addPozyx(UA_Server *server){
+static UA_NodeId addPozyx(UA_Server *server){
     UA_NodeId pozyxTagNodeId;
     UA_ObjectAttributes object_attr = UA_ObjectAttributes_default;
 
@@ -184,6 +186,7 @@ static void addPozyx(UA_Server *server){
     UA_Variant_setScalar(&val, &speedUnit, &UA_TYPES[UA_TYPES_EUINFORMATION]);
     UA_Server_writeValue(server, currentChild, val);
 
+    return pozyxTagNodeId;
 }
 
 static UA_StatusCode getSupportedLocationTypes(UA_Server *server,
@@ -203,7 +206,96 @@ static UA_StatusCode getSupportedLocationTypes(UA_Server *server,
     return UA_STATUSCODE_GOOD;
 }
 
+static UA_StatusCode
+scanPozyxWithoutOpt(UA_Server *server,
+          const UA_NodeId *sessionId, void *sessionHandle,
+          const UA_NodeId *methodId, void *methodContext,
+          const UA_NodeId *objectId, void *objectContext,
+          size_t inputSize, const UA_Variant *input,
+          size_t outputSize, UA_Variant *output) {
 
+    UA_ExtensionObject *settingsWithoutOptEo = (UA_ExtensionObject *) input[0].data;
+    UA_ScanSettingsWithoutOpt settingsWithoutOpt;
+    memset(&settingsWithoutOpt, 0, sizeof(UA_ScanSettingsWithoutOpt));
+    size_t settingsWithoutOptOffset = 0;
+    UA_ByteString byteString = settingsWithoutOptEo->content.encoded.body;
+    UA_ScanSettingsWithoutOpt_decodeBinary(&byteString, &settingsWithoutOptOffset, &settingsWithoutOpt);
+
+    UA_ScanSettings settings;
+    UA_ScanSettings_init(&settings);
+    settings.hasLocationType = true;
+    settings.duration = settingsWithoutOpt.duration;
+    settings.cycles = settingsWithoutOpt.cycles;
+    settings.dataAvailable = settingsWithoutOpt.dataAvailable;
+    settings.locationType = settingsWithoutOpt.locationType;
+
+    UA_ByteString *settingsBuf = UA_ByteString_new();
+    size_t settingsMsgSize = UA_ScanSettings_calcSizeBinary(&settings);
+    UA_ByteString_allocBuffer(settingsBuf, settingsMsgSize);
+    memset(settingsBuf->data, 0, settingsMsgSize);
+    UA_Byte *settingsBufPos = settingsBuf->data;
+    const UA_Byte *settingsBufEnd = &settingsBuf->data[settingsBuf->length];
+    UA_ScanSettings_encodeBinary(&settings, &settingsBufPos, settingsBufEnd);
+
+    UA_ExtensionObject settingsEo;
+    settingsEo.encoding = UA_EXTENSIONOBJECT_ENCODED_BYTESTRING;
+    settingsEo.content.encoded.typeId = UA_NODEID_NUMERIC(autoidNamespace, UA_TYPES_AUTOID[UA_TYPES_AUTOID_SCANSETTINGS].binaryEncodingId);
+    settingsEo.content.encoded.body = *settingsBuf;
+    UA_Variant settingsInput;
+    UA_Variant_setScalar(&settingsInput, &settingsEo, &UA_TYPES[UA_TYPES_EXTENSIONOBJECT]);
+
+    UA_CallMethodRequest callMethodRequest;
+    UA_CallMethodRequest_init(&callMethodRequest);
+    callMethodRequest.inputArgumentsSize = 1;
+    callMethodRequest.objectId = *objectId;
+    callMethodRequest.methodId = UA_NODEID_NUMERIC(autoidNamespace, UA_AUTOIDID_RTLSDEVICETYPE_SCAN);
+    callMethodRequest.inputArguments = &settingsInput;
+    UA_CallMethodResult methodResult;
+    methodResult = UA_Server_call(server, &callMethodRequest);
+
+    if(methodResult.statusCode) return methodResult.statusCode;
+
+    UA_AutoIdOperationStatusEnumeration *status = (UA_AutoIdOperationStatusEnumeration *) methodResult.outputArguments[1].data;
+    if(*status != UA_AUTOIDOPERATIONSTATUSENUMERATION_SUCCESS){
+        output[1] = methodResult.outputArguments[1];
+        return UA_STATUSCODE_GOOD;
+    }
+    UA_Variant resultsVariant = methodResult.outputArguments[0];
+    size_t resultNum = resultsVariant.arrayLength;
+    size_t resultsWithoutOptOffset = 0;
+    UA_ExtensionObject *resultsEo = (UA_ExtensionObject *) resultsVariant.data;
+    UA_ExtensionObject *resultsWithoutOpt = UA_Array_new(resultNum, &UA_TYPES[UA_TYPES_EXTENSIONOBJECT]);
+    UA_RtlsLocationResult result;
+    UA_RtlsLocationResultWithoutOpt resultWithoutOpt;
+    for(size_t i = 0; i < resultNum; i++){
+        UA_ByteString resultBuf = resultsEo[i].content.encoded.body;
+        UA_RtlsLocationResult_decodeBinary(&resultBuf, &resultsWithoutOptOffset, &result);
+        resultsWithoutOptOffset = 0;
+        resultWithoutOpt.codeType = result.codeType;
+        resultWithoutOpt.scanData = result.scanData.string;
+        resultWithoutOpt.timestamp = result.timestamp;
+        resultWithoutOpt.location = result.location.local;
+        resultWithoutOpt.speed = result.speed;
+        resultWithoutOpt.heading = result.heading;
+        resultWithoutOpt.rotation = result.rotation;
+        resultWithoutOpt.receiveTime = result.receiveTime;
+
+        size_t resultWithoutOptMsgSize = UA_RtlsLocationResultWithoutOpt_calcSizeBinary(&resultWithoutOpt);
+        UA_ByteString *resultWithoutOptBuf = &resultsWithoutOpt[i].content.encoded.body;
+        UA_ByteString_allocBuffer(resultWithoutOptBuf, resultWithoutOptMsgSize);
+        memset(resultWithoutOptBuf->data, 0, resultWithoutOptMsgSize);
+        UA_Byte *resultWithoutOptPos = resultWithoutOptBuf->data;
+        const UA_Byte *resultWithoutOptEnd = &resultWithoutOptBuf->data[resultWithoutOptBuf->length];
+
+        resultsWithoutOpt[i].encoding = UA_EXTENSIONOBJECT_ENCODED_BYTESTRING;
+        resultsWithoutOpt[i].content.encoded.typeId = UA_NODEID_NUMERIC(3, UA_TYPES_AUTOID[UA_TYPES_AUTOID_RTLSLOCATIONRESULTWITHOUTOPT].binaryEncodingId);
+        UA_RtlsLocationResultWithoutOpt_encodeBinary(&resultWithoutOpt, &resultWithoutOptPos, resultWithoutOptEnd);
+    }
+    UA_Variant_setArrayCopy(output, resultsWithoutOpt, resultNum, &UA_TYPES[UA_TYPES_EXTENSIONOBJECT]);
+    UA_Variant_setScalarCopy(output+1, status, &UA_TYPES_AUTOID[UA_TYPES_AUTOID_AUTOIDOPERATIONSTATUSENUMERATION]);
+
+    return UA_STATUSCODE_GOOD;
+}
 
 static UA_StatusCode
 scanPozyx(UA_Server *server,
@@ -478,10 +570,8 @@ int main(int argc, char** argv) {
     }
 
     tags = UA_calloc(NUM_TAGS, sizeof(TagData));
-    addPozyx(server);
 
     int sockfd = open_nb_socket(ADDRESS, PORT);
-    printf("mqtt socket: %d\n", sockfd);
 
     if(sockfd == -1){
         UA_LOG_ERROR(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND, "Failed to open socket for MQTT connection");
@@ -513,12 +603,15 @@ int main(int argc, char** argv) {
         return -1;
     }*/
 
+    addPozyx(server);
+
     // subscribe
     mqtt_subscribe(&client, TOPIC, 0);
 
     UA_Server_setMethodNode_callback(server, UA_NODEID_NUMERIC(autoidNamespace, 7055), scanPozyx);
     UA_Server_setMethodNode_callback(server, UA_NODEID_NUMERIC(autoidNamespace, 7058), getSupportedLocationTypes);
     UA_Server_setMethodNode_callback(server, UA_NODEID_NUMERIC(autoidNamespace, 7056), getLocationPozyx);
+    UA_Server_setMethodNode_callback(server, UA_NODEID_NUMERIC(autoidNamespace, 7059), scanPozyxWithoutOpt);
 
     UA_Server_addRepeatedCallback(server, client_refresher, &client, 200, NULL);
 
